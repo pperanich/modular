@@ -35,7 +35,6 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics._internal.aggregation import (
     ExplicitBucketHistogramAggregation,
 )
-from opentelemetry.sdk.metrics._internal.instrument import Histogram
 from opentelemetry.sdk.metrics.export import (
     MetricReader,
     PeriodicExportingMetricReader,
@@ -94,6 +93,43 @@ metrics_resource = Resource.create(
     }
 )
 
+
+# Histogram bucket boundaries for ratio metrics (0.0 to 1.0).
+# Used for cache hit rates, acceptance rates, and similar proportions.
+HISTOGRAM_RATIO_BUCKETS: tuple[float, ...] = (
+    0.0,
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    1.0,
+)
+
+# Histogram bucket boundaries for count/size metrics (integer-valued).
+# Used for batch sizes, token counts per request, and similar quantities.
+HISTOGRAM_COUNT_BUCKETS: tuple[float, ...] = (
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64,
+    128,
+    256,
+    512,
+    1024,
+    2048,
+    4096,
+    8192,
+)
 
 # Histogram bucket boundaries for latency-style metrics (in milliseconds).
 #
@@ -358,22 +394,64 @@ def configure_metrics(settings: Settings) -> None:
             )
         )
 
-    # Use a single histogram view for all Histogram instruments.
+    # Every histogram must be matched by exactly one named View to avoid
+    # duplicate Prometheus series. The OTEL SDK applies ALL matching Views
+    # (not first-match), so a catch-all instrument_type=Histogram View
+    # would conflict with any named View on the same instrument.
     #
-    # This deliberately trades per-metric bucket tuning for simplicity and
-    # safety:
-    # - Every histogram (existing and future) uses the same bucket boundaries.
-    # - Each instrument matches exactly one View, so we never get duplicate
-    #   Prometheus histograms for the same metric name due to overlapping Views.
-    #
-    # We reuse the generic latency buckets, which already cover sub-10ms
-    # through long-running (tens of seconds) requests.
+    # Histograms are grouped by bucket type:
+    # - Ratio (0.0–1.0): cache hit rates, acceptance rates
+    # - Count (integer): batch sizes, token counts
+    # - Latency (ms): request times, TTFT, ITL, execution times
+
+    _ratio_metrics = [
+        "maxserve.cache.hit_rate",
+        "maxserve.speculative.acceptance_rate",
+    ]
+
+    _count_metrics = [
+        "maxserve.batch_size",
+        "maxserve.input_tokens_per_request",
+        "maxserve.output_tokens_per_request",
+    ]
+
+    _latency_metrics = [
+        "maxserve.request_time",
+        "maxserve.input_processing_time",
+        "maxserve.output_processing_time",
+        "maxserve.time_to_first_token",
+        "maxserve.model_load_time",
+        "maxserve.itl",
+        "maxserve.batch_execution_time",
+    ]
+
     views: list[View] = [
-        View(
-            instrument_type=Histogram,
-            aggregation=ExplicitBucketHistogramAggregation(
-                HISTOGRAM_LATENCY_BUCKETS_MS
-            ),
+        *(
+            View(
+                instrument_name=name,
+                aggregation=ExplicitBucketHistogramAggregation(
+                    HISTOGRAM_RATIO_BUCKETS
+                ),
+            )
+            for name in _ratio_metrics
+        ),
+        *(
+            View(
+                instrument_name=name,
+                aggregation=ExplicitBucketHistogramAggregation(
+                    HISTOGRAM_COUNT_BUCKETS
+                ),
+            )
+            for name in _count_metrics
+        ),
+        *(
+            View(
+                instrument_name=name,
+                aggregation=ExplicitBucketHistogramAggregation(
+                    HISTOGRAM_LATENCY_BUCKETS_MS
+                ),
+            )
+            for name in _latency_metrics
         ),
     ]
 

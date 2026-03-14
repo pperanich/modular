@@ -273,6 +273,9 @@ class BatchMetrics:
         METRICS.cache_misses(self.cache_miss_tokens)
 
         if self.draft_tokens_generated > 0:
+            METRICS.speculative_acceptance_rate(
+                self.draft_tokens_accepted / self.draft_tokens_generated
+            )
             METRICS.speculative_draft_tokens_accepted(
                 self.draft_tokens_accepted
             )

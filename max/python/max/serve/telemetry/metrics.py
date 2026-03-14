@@ -170,6 +170,10 @@ SERVE_METRICS: dict[str, SupportedInstruments] = {
         unit="ms",
         description="Audio output length in milliseconds",
     ),  # type: ignore
+    "maxserve.speculative.acceptance_rate": _meter.create_histogram(
+        "maxserve.speculative.acceptance_rate",
+        description="Draft token acceptance rate per batch",
+    ),  # type: ignore
     "maxserve.speculative.draft_tokens_accepted": _meter.create_counter(
         "maxserve.speculative.draft_tokens_accepted",
         unit="tokens",
@@ -516,6 +520,16 @@ class _AsyncMetrics:
             MaxMeasurement(
                 "maxserve.tts.audio_output_length",
                 length_ms,
+                self.extra_attributes,
+            ),
+            MetricLevel.DETAILED,
+        )
+
+    def speculative_acceptance_rate(self, rate: float) -> None:
+        self.client.send_measurement(
+            MaxMeasurement(
+                "maxserve.speculative.acceptance_rate",
+                rate,
                 self.extra_attributes,
             ),
             MetricLevel.DETAILED,
